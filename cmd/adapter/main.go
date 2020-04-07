@@ -20,6 +20,7 @@ import (
 
 type prometheusAdapter struct {
 	listenPort string
+	listenIP string
 }
 
 var log = logger.NewLogger(true)
@@ -43,8 +44,22 @@ func GetCmd() *cobra.Command {
 
 	f := cmd.PersistentFlags()
 	f.StringVarP(&adapter.listenPort, "port", "p", adapter.listenPort, "TCP port to use for adapter")
+	f.StringVarP(&adapter.listenIP, "listen IP", "i", adapter.listenIP, "TCP IP to use for adapter")
 
 	return cmd
+}
+
+func samplesToString(samples *model.Samples) string {
+	var result string
+	for _, s := range *samples {
+		//fmt.Println("time ",s.Timestamp)
+		//fmt.Println("value ",s.Value)
+		//fmt.Println("metric ",s.Metric.String())
+		tmp := fmt.Sprintln("%d %f %s",s.Timestamp,s.Value,s.Metric.String())
+		result += tmp
+	}
+
+	return result
 }
 
 func protoToSamples(req *prompb.WriteRequest) model.Samples {
@@ -52,6 +67,8 @@ func protoToSamples(req *prompb.WriteRequest) model.Samples {
 	for _, ts := range req.Timeseries {
 		metric := make(model.Metric, len(ts.Labels))
 		for _, l := range ts.Labels {
+			//fmt.Println("label name",l.Name)
+			//fmt.Println("label value",l.Value)
 			metric[model.LabelName(l.Name)] = model.LabelValue(l.Value)
 		}
 
@@ -75,6 +92,7 @@ func (m *prometheusAdapter) run() error {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		//log.Info("recieve data",zap.Any("compressed data",compressed))
 
 		reqBuf, err := snappy.Decode(nil, compressed)
 		if err != nil {
@@ -82,6 +100,7 @@ func (m *prometheusAdapter) run() error {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		//log.Info("req buf",zap.Any("buff",reqBuf))
 
 		var req prompb.WriteRequest
 		if err := proto.Unmarshal(reqBuf, &req); err != nil {
@@ -89,13 +108,17 @@ func (m *prometheusAdapter) run() error {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		//log.Debug("unmarshal to promb write request",zap.Any("req",req.String()))
 
 		samples := protoToSamples(&req)
 		log.Info("Recieve sample count",zap.Any("sample-count",samples.Len()))
+
+		//_ = samplesToString(&samples)
+		//log.Debug("samples content",zap.String("content",sampleStrs))
+
 	})
 
-	//todo
-	addr := "localhost:9100"
+	addr := fmt.Sprintf("%s:%s",m.listenIP,m.listenPort)
 
 	return http.ListenAndServe(addr, nil)
 }
